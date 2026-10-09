@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Version>1.2.0</Version>
+    <Company>HardwareScope</Company>
+    <Product>HardwareScope 硬件视界</Product>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

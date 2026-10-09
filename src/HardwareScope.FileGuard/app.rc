@@ -1,0 +1,25 @@
+#include <windows.h>
+1 ICON "../HardwareScope.Desktop/Assets/app.ico"
+1 VERSIONINFO
+ FILEVERSION 1,1,0,0
+ PRODUCTVERSION 1,1,0,0
+ FILEFLAGSMASK 0x3fL
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "080404b0"
+  BEGIN
+   VALUE "CompanyName", "HardwareScope\0"
+   VALUE "FileDescription", "文件占用查看与解除\0"
+   VALUE "FileVersion", "1.1.0\0"
+   VALUE "ProductName", "HardwareScope FileGuard 文件占用\0"
+   VALUE "ProductVersion", "1.1.0\0"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x804, 1200
+ END
+END

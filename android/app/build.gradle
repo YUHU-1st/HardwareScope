@@ -1,0 +1,40 @@
+plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
+
+android {
+    namespace 'io.github.hardwarescope.mobile'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'io.github.hardwarescope.mobile'
+        minSdk 26
+        targetSdk 35
+        versionCode 2
+        versionName '1.0.1'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
+    def signingFile = rootProject.file('signing/release.properties')
+    if (signingFile.exists()) {
+        def secrets = new Properties()
+        signingFile.withInputStream { secrets.load(it) }
+        signingConfigs {
+            release {
+                storeFile rootProject.file(secrets.getProperty('storeFile'))
+                storePassword secrets.getProperty('storePassword')
+                keyAlias secrets.getProperty('keyAlias')
+                keyPassword secrets.getProperty('keyPassword')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (signingFile.exists()) signingConfig signingConfigs.release
+        }
+    }
+    lint { abortOnError true }
+}
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20250517'
+}
+tasks.withType(Test).configureEach { jvmArgs '-Dfile.encoding=UTF-8' }

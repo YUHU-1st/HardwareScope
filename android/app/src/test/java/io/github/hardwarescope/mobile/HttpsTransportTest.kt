@@ -20,6 +20,7 @@ class HttpsTransportTest {
     private lateinit var certificate: X509Certificate
     private val hits = AtomicInteger()
     @Volatile private var authorization = ""
+    @Volatile private var lastAuthorization = ""
     private val token = "b2".repeat(32)
 
     @Before fun startServer() {
@@ -43,11 +44,13 @@ class HttpsTransportTest {
                             if (line.startsWith("Authorization:", true)) auth = line.substringAfter(':').trim()
                         }
                         hits.incrementAndGet()
+                        lastAuthorization = auth
                         if (path == "/api/snapshot") authorization = auth
-                        val status = if (path == "/redirect") "307 Temporary Redirect" else "200 OK"
+                        val status = when (path) { "/redirect" -> "307 Temporary Redirect"; "/unauthorized" -> "401 Unauthorized"; else -> "200 OK" }
                         val body = when (path) {
                             "/redirect" -> "{\"message\":\"redirect rejected\"}".toByteArray()
                             "/large" -> ByteArray(2 * 1024 * 1024 + 10) { 65 }
+                            "/unauthorized" -> "{\"message\":\"授权密钥无效\"}".toByteArray(Charsets.UTF_8)
                             else -> "{\"sequence\":42,\"machineName\":\"test-pc\"}".toByteArray()
                         }
                         val location = if (path == "/redirect") "Location: http://127.0.0.1:${server.localPort}/api/snapshot\r\n" else ""
@@ -81,5 +84,26 @@ class HttpsTransportTest {
 
     @Test fun excessiveResponseIsBounded() {
         assertThrows(IllegalArgumentException::class.java) { HttpsTransport(config()).request("GET", "/large") }
+    }
+
+    @Test fun pinBootstrapObservesCertificateAndNeverSendsAuthorization() {
+        val transport = HttpsPairingTransport(PairingTarget("HTTPS", config().address))
+        try {
+            transport.request("POST", "/pair/start", org.json.JSONObject())
+            assertEquals(certificateFingerprint(certificate), transport.peerFingerprint)
+            assertEquals("", lastAuthorization)
+            assertThrows(IllegalArgumentException::class.java) { transport.request("GET", "/api/snapshot") }
+            assertEquals(1, hits.get())
+        } finally { transport.close() }
+    }
+
+    @Test fun expiredSavedAuthorizationRequestsNewPinRatherThanManualSecret() {
+        val transport = HttpsTransport(config())
+        try {
+            val error = assertThrows(IllegalStateException::class.java) { transport.request("GET", "/unauthorized") }
+            assertTrue(error.message.orEmpty().contains("新 PIN 重新配对"))
+            assertTrue(error.message.orEmpty().contains("HTTP 401"))
+            assertFalse(error.message.orEmpty().contains("密钥"))
+        } finally { transport.close() }
     }
 }

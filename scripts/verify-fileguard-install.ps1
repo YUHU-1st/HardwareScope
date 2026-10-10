@@ -1,6 +1,6 @@
 param(
-    [string]$SetupPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts\release\1.2.0\HardwareScope-FileGuard-1.1.0-windows-x64-setup.exe'),
-    [string]$ReportDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts\verification\1.2.0')
+    [string]$SetupPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts\release\1.3.0\HardwareScope-FileGuard-1.1.0-windows-x64-setup.exe'),
+    [string]$ReportDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts\verification\1.3.0')
 )
 $ErrorActionPreference = 'Stop'
 if (-not ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))) { throw '此安装验证脚本需要管理员权限。' }

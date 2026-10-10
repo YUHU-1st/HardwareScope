@@ -32,7 +32,6 @@ fun certificateFingerprint(certificate: X509Certificate): String = MessageDigest
 // The self-signed PC certificate is authorized by an explicit, exact SHA-256 pin.
 @SuppressLint("CustomX509TrustManager")
 class HttpsTransport(private val config: ConnectionConfig) : Transport {
-    @Volatile private var active: HttpsURLConnection? = null
     private val tls = SSLContext.getInstance("TLS").apply {
         init(null, arrayOf<TrustManager>(object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = throw CertificateException("客户端证书不适用")
@@ -44,22 +43,61 @@ class HttpsTransport(private val config: ConnectionConfig) : Transport {
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         }), null)
     }
+    private val connection = JsonHttpsConnection(config.address, tls, config.token) { certificateFingerprint(it) == config.fingerprint }
+    override fun request(method: String, path: String, body: JSONObject?) = connection.request(method, path, body)
+    override fun close() = connection.close()
+}
+
+/** Only the two PIN bootstrap routes may observe an as-yet untrusted certificate. */
+@SuppressLint("CustomX509TrustManager")
+class HttpsPairingTransport(target: PairingTarget) : PairingTransport {
+    @Volatile override var peerFingerprint: String? = null
+        private set
+    private fun accept(certificate: X509Certificate): Boolean {
+        certificate.checkValidity()
+        val observed = certificateFingerprint(certificate)
+        synchronized(this) {
+            val previous = peerFingerprint
+            if (previous != null && previous != observed) return false
+            peerFingerprint = observed
+        }
+        return true
+    }
+    private val tls = SSLContext.getInstance("TLS").apply {
+        init(null, arrayOf<TrustManager>(object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = throw CertificateException("客户端证书不适用")
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                val certificate = chain?.firstOrNull() ?: throw CertificateException("电脑未提供证书")
+                if (!accept(certificate)) throw CertificateException("配对过程中电脑证书发生变化。")
+            }
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        }), null)
+    }
+    private val connection = JsonHttpsConnection(target.validated().also { require(it.mode == "HTTPS") }.address, tls, null, ::accept)
+    override fun request(method: String, path: String, body: JSONObject?): JSONObject {
+        require(isPairingRequest(method, path)) { "PIN 配对连接只能用于验证电脑。" }
+        return connection.request(method, path, body)
+    }
+    override fun close() = connection.close()
+}
+
+private class JsonHttpsConnection(private val address: String, private val tls: SSLContext, private val token: String?, private val verify: (X509Certificate) -> Boolean) : Transport {
+    @Volatile private var active: HttpsURLConnection? = null
 
     override fun request(method: String, path: String, body: JSONObject?): JSONObject {
-        val connection = URL(config.address + path).openConnection() as HttpsURLConnection
+        val connection = URL(address + path).openConnection() as HttpsURLConnection
         active = connection
         try {
             connection.sslSocketFactory = tls.socketFactory
-            // Trust is granted only to the explicitly pinned certificate for this connection.
             connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, session ->
                 val cert = session.peerCertificates.firstOrNull() as? X509Certificate
-                cert != null && certificateFingerprint(cert) == config.fingerprint
+                cert != null && verify(cert)
             }
             connection.instanceFollowRedirects = false
             connection.connectTimeout = 8000
             connection.readTimeout = 12000
             connection.requestMethod = method
-            connection.setRequestProperty("Authorization", "Bearer ${config.token}")
+            if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
             connection.setRequestProperty("Accept", "application/json")
             if (body != null) {
                 val bytes = body.toString().toByteArray(Charsets.UTF_8)
@@ -82,7 +120,10 @@ class HttpsTransport(private val config: ConnectionConfig) : Transport {
                 String(out.toByteArray(), Charsets.UTF_8)
             }.orEmpty()
             val json = try { JSONObject(data) } catch (_: Exception) { throw IllegalStateException("电脑响应不是有效 JSON（HTTP $status）。") }
-            if (status !in 200..299) throw IllegalStateException(json.optString("message").ifBlank { if (status == 401) "访问密钥不正确或已轮换。" else "电脑拒绝请求。" } + "（HTTP $status）")
+            if (status !in 200..299) {
+                val message = if (status == 401 && token != null) "手机授权已失效，请使用新 PIN 重新配对。" else json.optString("message").ifBlank { "电脑拒绝请求。" }
+                throw IllegalStateException(message + "（HTTP $status）")
+            }
             return json
         } finally {
             connection.disconnect()
@@ -110,6 +151,7 @@ class BluetoothTransport(private val context: Context, private val config: Conne
     }
 
     override fun request(method: String, path: String, body: JSONObject?): JSONObject {
+        require(config.token.isNotEmpty() || isPairingRequest(method, path)) { "请先用 PIN 验证电脑。" }
         val timeout = timer.schedule({ socket?.close() }, 12, TimeUnit.SECONDS)
         try {
             connect()
@@ -139,4 +181,14 @@ class BluetoothTransport(private val context: Context, private val config: Conne
 
     override fun close() { socket?.close(); socket = null; input = null }
     fun dispose() { close(); timer.shutdownNow() }
+}
+
+class BluetoothPairingTransport(context: Context, target: PairingTarget) : PairingTransport {
+    override val peerFingerprint: String? = null
+    private val connection = BluetoothTransport(context, ConnectionConfig("Bluetooth", target.validated().also { require(it.mode == "Bluetooth") }.address, "", ""))
+    override fun request(method: String, path: String, body: JSONObject?): JSONObject {
+        require(isPairingRequest(method, path)) { "PIN 配对连接只能用于验证电脑。" }
+        return connection.request(method, path, body)
+    }
+    override fun close() = connection.dispose()
 }

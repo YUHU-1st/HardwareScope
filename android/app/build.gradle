@@ -7,8 +7,8 @@ android {
         applicationId 'io.github.hardwarescope.mobile'
         minSdk 26
         targetSdk 35
-        versionCode 2
-        versionName '1.0.1'
+        versionCode 3
+        versionName '1.1.0'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = '17' }
@@ -27,14 +27,20 @@ android {
     }
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             if (signingFile.exists()) signingConfig signingConfigs.release
         }
     }
     lint { abortOnError true }
 }
 dependencies {
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.86'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20250517'
 }
-tasks.withType(Test).configureEach { jvmArgs '-Dfile.encoding=UTF-8' }
+tasks.withType(Test).configureEach {
+    jvmArgs '-Dfile.encoding=UTF-8'
+    // A fresh one-use PIN must always reach the live PC, even if JVM classes are unchanged.
+    outputs.upToDateWhen { !System.getenv('HARDWARESCOPE_PC_INTEGRATION_FILE') }
+}

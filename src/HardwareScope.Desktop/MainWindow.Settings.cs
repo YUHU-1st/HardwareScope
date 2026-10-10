@@ -27,7 +27,7 @@ public sealed partial class MainWindow
             catch (Exception ex) { feedback.Text = "保存失败：" + ex.Message; }
         });
         apply.HorizontalAlignment = HorizontalAlignment.Left;
-        panel.Children.Add(Card(Stack(Text("连接与控制权限", 16, true), Hint("首次使用请在电脑端启用连接，再将下方信息填入安卓应用。远程控制权限可随时关闭。"), enabled, bluetooth, control, Hint("局域网服务端口"), port, apply, feedback)));
+        panel.Children.Add(Card(Stack(Text("连接与控制权限", 16, true), Hint("启用局域网或蓝牙后，手机选择本电脑并输入六位 PIN 即可配对。远程控制权限可随时关闭。"), enabled, bluetooth, control, Hint("局域网服务端口"), port, apply, feedback)));
         var addresses = new ListBox { MinHeight = 50, MaxHeight = 180, Margin = new Thickness(0, 10, 0, 10) };
         var connectionState = Hint("");
         var bluetoothStatus = Hint("");
@@ -38,34 +38,45 @@ public sealed partial class MainWindow
             return Task.CompletedTask;
         });
         copyAddress.HorizontalAlignment = HorizontalAlignment.Left;
-        panel.Children.Add(Card(Stack(Text("电脑连接信息", 16, true), connectionState, Hint("选择手机可以访问的电脑地址，再点击复制。"), addresses, copyAddress, bluetoothStatus)));
-        var revealed = false;
-        var token = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 10) };
-        var tokenButtons = new WrapPanel();
-        var show = Button("显示密钥", () => { revealed = !revealed; RefreshPage(); return Task.CompletedTask; });
-        show.Margin = new Thickness(0, 0, 9, 8);
-        tokenButtons.Children.Add(show);
-        var copy = Button("复制密钥", () => { Clipboard.SetText(host.GetConnectionInfo().Token); feedback.Text = "连接密钥已复制；仅粘贴到自己的手机。"; return Task.CompletedTask; });
-        copy.Margin = new Thickness(0, 0, 9, 8);
-        tokenButtons.Children.Add(copy);
-        var rotate = Button("重置密钥", () =>
+        var pin = Text("", 36, true, AccentColor);
+        pin.FontFamily = new System.Windows.Media.FontFamily("Consolas");
+        pin.Margin = new Thickness(0, 12, 0, 10);
+        var pinState = Hint("");
+        if (host.GetPairingInfo().Pin is null && host.GetPairingInfo().LockedUntil is null) host.CreatePairingPin();
+        var pinButtons = new WrapPanel();
+        var generate = Button("生成新 PIN", () =>
         {
-            if (MessageBox.Show(this, "重置密钥后，已连接的手机需要重新输入密钥。继续？", "重置连接密钥", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+            host.CreatePairingPin();
+            feedback.Text = "已生成新的六位 PIN，有效期五分钟。";
+            RefreshPage();
+            return Task.CompletedTask;
+        });
+        generate.SetResourceReference(StyleProperty, "PrimaryButton");
+        generate.Margin = new Thickness(0, 0, 9, 8);
+        pinButtons.Children.Add(generate);
+        var copyPin = Button("复制 PIN", () =>
+        {
+            var currentPin = host.GetPairingInfo().Pin;
+            if (currentPin is not null) { Clipboard.SetText(currentPin); feedback.Text = "六位 PIN 已复制。"; }
+            return Task.CompletedTask;
+        });
+        copyPin.Margin = new Thickness(0, 0, 9, 8);
+        pinButtons.Children.Add(copyPin);
+        var revoke = Button("撤销手机授权", () =>
+        {
+            if (MessageBox.Show(this, "撤销后，所有已配对手机都需要使用新 PIN 重新配对。继续？", "撤销手机授权", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
             {
                 host.RotateRemoteToken();
-                feedback.Text = "密钥已重置。请更新手机端的连接信息。";
-                revealed = false;
+                feedback.Text = "手机授权已撤销。请生成新 PIN 重新配对。";
                 RefreshPage();
             }
             return Task.CompletedTask;
         });
-        rotate.Margin = new Thickness(0, 0, 0, 8);
-        tokenButtons.Children.Add(rotate);
-        var certificate = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 9, 0, 10) };
-        var copyCertificate = Button("复制证书指纹", () => { Clipboard.SetText(host.GetConnectionInfo().CertificateSha256); feedback.Text = "证书指纹已复制。"; return Task.CompletedTask; });
-        copyCertificate.HorizontalAlignment = HorizontalAlignment.Left;
-        panel.Children.Add(Card(Stack(Text("手机配对凭据", 16, true), Hint("密钥用于授权连接；安卓端还需核对电脑证书指纹。"), token, tokenButtons, Hint("证书 SHA-256 指纹"), certificate, copyCertificate)));
-        panel.Children.Add(Card(Stack(Text("如何连接", 16, true), Hint("局域网：让手机与电脑连接同一个 Wi-Fi / 局域网，在安卓端填入电脑 HTTPS 地址、连接密钥和证书指纹。Windows 防火墙询问时只允许可信的专用网络。\n蓝牙：先在 Windows 与 Android 系统设置中完成配对，再在安卓端选择本电脑。蓝牙是否可用以本页服务状态为准。\n连接完成后可实时查看硬件与进程；控制权限启用后还可修改设置、调整进程优先级或结束进程。"))));
+        revoke.Margin = new Thickness(0, 0, 0, 8);
+        pinButtons.Children.Add(revoke);
+        panel.Children.Insert(0, Card(Stack(Text("六位 PIN 配对", 18, true), Hint("启用局域网或蓝牙后，在手机端选择本电脑并输入下方 PIN。"), pin, pinState, pinButtons, Hint("PIN 五分钟内有效，配对成功后失效；手机安全保存授权，后续可自动重连。"))));
+        panel.Children.Add(Card(Stack(Text("电脑连接信息", 16, true), connectionState, Hint("手机会查找同一局域网内的电脑；下方地址用于检查网络连接。"), addresses, copyAddress, bluetoothStatus)));
+        panel.Children.Add(Card(Stack(Text("如何连接", 16, true), Hint("局域网：手机与电脑连接同一个 Wi-Fi / 局域网，在安卓端查找并选择本电脑，输入六位 PIN。Windows 防火墙询问时允许可信的专用网络。\n蓝牙：先在 Windows 与 Android 系统设置中完成配对，再在安卓端选择本电脑并输入六位 PIN。\n配对完成后可实时查看硬件与进程；允许手机控制后还可修改设置、调整优先级或结束进程。"))));
         panel.Children.Add(Card(Stack(Text("vivo 跨网络连接", 16, true), Hint("公开 SDK 的账号发现、电脑到手机通道及第三方应用授权仍需官方确认。本版提供局域网与蓝牙；vivo SDK 调研结论随交付文档提供。"))));
         string? addressKey = null;
         refresh.Add(() =>
@@ -81,9 +92,14 @@ public sealed partial class MainWindow
             }
             connectionState.Text = $"局域网服务：{(info.RemoteEnabled ? "运行中" : "未启用 / 未成功启动")}  ·  远程控制：{(info.RemoteControlEnabled ? "允许" : "关闭")}";
             bluetoothStatus.Text = "\n蓝牙：" + info.BluetoothStatus;
-            token.Text = revealed ? info.Token : "••••••••••••••••••••••••••••••••";
-            show.Content = revealed ? "隐藏密钥" : "显示密钥";
-            certificate.Text = info.CertificateSha256;
+            var pairing = host.GetPairingInfo();
+            var locked = pairing.LockedUntil is { } until && until > DateTimeOffset.UtcNow;
+            pin.Text = pairing.Pin is { } code ? string.Join(" ", code.ToCharArray()) : "— — — — — —";
+            pinState.Text = locked ? "尝试次数过多，请稍后重新配对。" : pairing.ExpiresAt is { } expires && pairing.Pin is not null
+                ? $"剩余有效时间：{Math.Max(0, (int)(expires - DateTimeOffset.UtcNow).TotalMinutes):0} 分 {Math.Max(0, (int)(expires - DateTimeOffset.UtcNow).TotalSeconds) % 60:00} 秒"
+                : "PIN 已使用或过期，点击“生成新 PIN”可配对另一台手机。";
+            generate.IsEnabled = !locked;
+            copyPin.IsEnabled = pairing.Pin is not null && !locked;
             copyAddress.IsEnabled = info.Addresses.Length > 0;
         });
         content.Children.Add(Scroll(panel));

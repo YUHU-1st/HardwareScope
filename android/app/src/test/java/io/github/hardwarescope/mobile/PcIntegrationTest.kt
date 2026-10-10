@@ -10,12 +10,29 @@ import java.io.File
 /** Optional JVM integration against the real PC service; no user process is controlled. */
 class PcIntegrationTest {
     private lateinit var config: ConnectionConfig
+    private lateinit var connection: JSONObject
 
     @Before fun readPrivateConnectionFile() {
         val filename = System.getenv("HARDWARESCOPE_PC_INTEGRATION_FILE")
         assumeTrue("PC integration is enabled only with an explicit private connection file.", !filename.isNullOrBlank())
         val json = JSONObject(File(filename!!).readText(Charsets.UTF_8))
+        connection = json
         config = ConnectionConfig("HTTPS", json.getString("address"), json.getString("fingerprint"), json.getString("token")).validated()
+    }
+
+    @Test fun realPcWrongPinThenSuccessfulSrpBootstrapAndPinnedApi() {
+        assumeTrue("PIN integration requires a fresh one-use PC PIN.", connection.has("pin"))
+        val target = PairingTarget("HTTPS", connection.getString("address"))
+        val pin = connection.getString("pin")
+        val wrong = pin.dropLast(1) + ((pin.last().digitToInt() + 1) % 10)
+        val failed = HttpsPairingTransport(target)
+        try { assertThrows(IllegalStateException::class.java) { PinPairingClient().pair(target, wrong, failed) } } finally { failed.close() }
+        val bootstrap = HttpsPairingTransport(target)
+        val paired = try { PinPairingClient().pair(target, pin, bootstrap) } finally { bootstrap.close() }
+        assertEquals(config.token, paired.token)
+        assertEquals(config.fingerprint, paired.fingerprint)
+        val transport = HttpsTransport(paired)
+        try { assertTrue(transport.request("GET", "/api/snapshot").getString("machineName").isNotBlank()) } finally { transport.close() }
     }
 
     @Test fun realPcSnapshotAndSettingsRoundTrip() {

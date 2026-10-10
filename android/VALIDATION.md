@@ -1,5 +1,29 @@
 # 安卓构建与连接验证
 
+## 1.1.0 六位 PIN 配对验证
+
+验证日期：2026-10-10（北京时间）。以下结果对应 1.1.0 / versionCode 3，历史 1.0.1 记录保留在下一节。
+
+正式 APK 为 `app/build/outputs/apk/release/app-release.apk`，99555 字节，SHA-256 为 `1e396f0662c0cba3c77606f3bf8b1db0ebbe7b48e7c080743b886759959259a3`。`aapt dump badging` 确认版本、包名 `io.github.hardwarescope.mobile`、最低 API 26、target SDK 35 与启动 Activity。`apksigner` 确认 v2 签名有效，仍使用原 RSA-3072 发布证书，其 SHA-256 为 `8e4c42717d669c54a0904946fbce3e018d437bdc472809e3036b3e8aef5d8c11`，可以覆盖更新原安装。
+
+`assembleRelease testReleaseUnitTest lintRelease` 全部通过。最终代码以重新生成的 PIN 再次运行隔离的真实 Windows 服务集成，30 项测试全部通过，0 失败、0 跳过。没有私有连接文件时，27 项独立测试仍可运行，3 项电脑集成测试自动跳过。Android lint 为 0 错误、8 项中文界面 `SetTextI18n` 格式化提示，没有设置 lint 基线隐藏错误。
+
+| 验证 | 结果 |
+|---|---|
+| PIN 与标准 SRP6a | 8 项测试通过；实际 Bouncy Castle 服务端与客户端双向证明，保留开头 0；错误 PIN 无法取得凭据；拒绝非六位 ASCII 数字、无效服务端公钥、错误 M2、AES-GCM 篡改和凭据证书不匹配；蓝牙使用相同证明协议 |
+| 局域网发现输入边界 | 3 项测试通过；连接地址始终使用 UDP 发件者地址；拒绝其他产品、无效端口、超长名称和错误响应端口；发现内容中的密钥与证书信息不会授予信任 |
+| 实际 TLS bootstrap 与普通请求 | 7 项测试通过；自签候选证书只用于两个配对路由，配对不发送 Authorization；第二次配对 TLS 握手更换证书时，在发送 HTTP 证明前拒绝；普通请求仍固定精确证书、携带强凭据、禁止重定向并限制 2 MB 响应。授权失效时引导以新 PIN 配对，无需用户处理强凭据 |
+| Java 手机实现与 .NET Windows 服务互通 | 3 项真实集成测试通过；错误 PIN 后正确 PIN 完成 SRP6a / M2 / AES-GCM 与实际 TLS 指纹绑定，并使用取得的强凭据读取真实电脑数据；硬件与进程数据字段校验；设置采样间隔后确认并恢复；错误强凭据为 HTTP 401，错误证书被拒绝 |
+| 原功能回归 | 4 项连接配置边界测试、5 项温度来源和缺失值测试全部通过 |
+| 凭据与后台行为 | PIN 输入每次打开为空，验证后清空，不进入 SecureStore；仅验证成功才保存强凭据和证书，失败或取消不覆盖原连接。取消、切后台及销毁 Activity 会关闭配对连接，排队的取消操作不会消费 PIN。局域网发现仅在连接对话框及手动刷新时运行，单次约 1.5 秒 |
+| APK 依赖与许可证 | Bouncy Castle 1.86 仅使用轻量 SRP 和 SHA-256 类，没有注册 provider；发布经过 R8 裁剪。APK 中确认包含 `assets/licenses/Bouncy-Castle-LICENSE.md`（1171 字节） |
+
+真实服务通过 `HARDWARESCOPE_PC_INTEGRATION_FILE` 指向忽略发布的临时私有 JSON，其中包含 `address`、`pin`、`token` 与 `fingerprint`。测试输出不记录 PIN 或强凭据，不控制任何用户进程；测试任务在此变量存在时跳过 Gradle 结果缓存。正确 PIN 在一次测试中消费，重跑必须生成新的 PIN。
+
+当前 `adb devices` 没有连接设备，未安装到用户手机，因此以上 JVM 与构建验证不等同于安卓实机界面、Android Keystore 或真实蓝牙配对兼容性验证。蓝牙的实际 RFCOMM 链路仍需要配对手机现场验证。
+
+## 1.0.1 历史验证
+
 验证日期：2026-10-09（北京时间）。
 
 正式 APK：`app/build/outputs/apk/release/app-release.apk`，677376 字节。包名 `io.github.hardwarescope.mobile`，版本 `1.0.1` / versionCode `2`，最低 Android 8.0（API 26），target / compile SDK 35。

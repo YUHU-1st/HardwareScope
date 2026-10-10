@@ -22,6 +22,7 @@ public sealed class MonitorHost : IAsyncDisposable
     private RemoteServer? remote;
     private BluetoothServer? bluetooth;
     private readonly X509Certificate2 certificate;
+    private readonly PairingManager pairing;
     private string token;
     private long sequence;
     private MonitorSnapshot current;
@@ -38,6 +39,7 @@ public sealed class MonitorHost : IAsyncDisposable
         ValidateSettings(settings);
         token = store.GetToken();
         certificate = store.GetCertificate();
+        pairing = new(() => (Volatile.Read(ref token), Convert.ToHexString(SHA256.HashData(certificate.RawData)).ToLowerInvariant()));
         current = new(DateTimeOffset.Now, Environment.MachineName, IsAdministrator(), 0, [], [], [],
             ["正在读取硬件与进程，请稍候"], new(0, 0, 0, settings.SamplingIntervalMs));
     }
@@ -89,6 +91,7 @@ public sealed class MonitorHost : IAsyncDisposable
 
     public async Task StopAsync()
     {
+        pairing.Cancel();
         if (cancellation == null) return;
         await cancellation.CancelAsync();
         if (samplingTask != null) await samplingTask;
@@ -150,7 +153,9 @@ public sealed class MonitorHost : IAsyncDisposable
             BluetoothServer.ServiceUuid.ToString(), bluetooth?.Status ?? "蓝牙服务未启用", remote != null, settings.RemoteControlEnabled);
     }
 
-    public void RotateRemoteToken() => Volatile.Write(ref token, store.RotateToken());
+    public PairingInfo CreatePairingPin() => pairing.CreatePin();
+    public PairingInfo GetPairingInfo() => pairing.GetInfo();
+    public void RotateRemoteToken() => pairing.Cancel(() => Volatile.Write(ref token, store.RotateToken()));
 
     internal bool Authorize(string? supplied)
     {
@@ -164,6 +169,10 @@ public sealed class MonitorHost : IAsyncDisposable
 
     internal async Task<(int Status, object Body)> DispatchAsync(string method, string path, JsonElement? body)
     {
+        if (path.StartsWith("/pair/", StringComparison.Ordinal))
+            return !Settings.RemoteEnabled && !Settings.BluetoothEnabled
+                ? (403, new CommandResult(false, "电脑端尚未启用手机连接"))
+                : pairing.Dispatch(method, path, body);
         if (method == "GET" && path == "/api/snapshot") return (200, Current);
         if (method == "GET" && path == "/api/settings") return (200, Settings);
         if (method == "GET" && path == "/api/connection")

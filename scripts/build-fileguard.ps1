@@ -19,16 +19,16 @@ try {
     if (-not $SkipTests) {
         & $msbuild tests\HardwareScope.FileGuard.Tests\HardwareScope.FileGuard.Tests.vcxproj /nologo /v:minimal /p:Configuration=Release /p:Platform=x64
         if ($LASTEXITCODE -ne 0) { throw '文件占用测试编译失败。' }
-        New-Item -ItemType Directory -Force -Path artifacts\verification\1.2.0 | Out-Null
-        & artifacts\tests\fileguard-x64\HardwareScope.FileGuard.Tests.exe --report "$projectRoot\artifacts\verification\1.2.0\fileguard-native.json"
+        New-Item -ItemType Directory -Force -Path artifacts\verification\1.3.0 | Out-Null
+        & artifacts\tests\fileguard-x64\HardwareScope.FileGuard.Tests.exe --report "$projectRoot\artifacts\verification\1.3.0\fileguard-native.json"
         if ($LASTEXITCODE -ne 0) { throw '文件占用实机测试失败。' }
     }
-    New-Item -ItemType Directory -Force -Path artifacts\release\1.2.0 | Out-Null
+    New-Item -ItemType Directory -Force -Path artifacts\release\1.3.0 | Out-Null
     & $InnoCompiler /Q scripts\fileguard-installer.iss
     if ($LASTEXITCODE -ne 0) { throw '文件占用独立安装包编译失败。' }
     Copy-Item -LiteralPath docs\文件占用模块.md -Destination artifacts\publish\fileguard-x64 -Force
     Copy-Item -LiteralPath docs\文件占用验证报告.md -Destination artifacts\publish\fileguard-x64 -Force
     Copy-Item -LiteralPath docs\界面更新验证.md -Destination artifacts\publish\fileguard-x64 -Force
-    Compress-Archive -LiteralPath artifacts\publish\fileguard-x64\HardwareScope.FileGuard.exe,artifacts\publish\fileguard-x64\文件占用模块.md,artifacts\publish\fileguard-x64\文件占用验证报告.md,artifacts\publish\fileguard-x64\界面更新验证.md -DestinationPath artifacts\release\1.2.0\HardwareScope-FileGuard-1.1.0-windows-x64-portable.zip -Force
+    Compress-Archive -LiteralPath artifacts\publish\fileguard-x64\HardwareScope.FileGuard.exe,artifacts\publish\fileguard-x64\文件占用模块.md,artifacts\publish\fileguard-x64\文件占用验证报告.md,artifacts\publish\fileguard-x64\界面更新验证.md -DestinationPath artifacts\release\1.3.0\HardwareScope-FileGuard-1.1.0-windows-x64-portable.zip -Force
 }
 finally { Pop-Location }

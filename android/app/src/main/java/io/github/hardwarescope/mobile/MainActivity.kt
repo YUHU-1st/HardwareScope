@@ -15,6 +15,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.Editable
 import android.text.InputType
+import android.text.InputFilter
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
@@ -64,6 +65,8 @@ class MainActivity : Activity() {
     private var visibleProcesses = 80
     private var processesPanel: LinearLayout? = null
     private var sessionGeneration = 0
+    @Volatile private var pairingGeneration = 0
+    @Volatile private var pairingTransport: PairingTransport? = null
     private val poll = Runnable { refresh() }
     private val categories = linkedMapOf("Motherboard" to "主板", "CPU" to "CPU", "GPU" to "GPU", "NPU" to "NPU", "Memory" to "内存", "VRAM" to "显存", "Network" to "网卡", "Storage" to "磁盘")
 
@@ -71,7 +74,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         store = SecureStore(this)
-        try { config = store.load() } catch (_: Exception) { Toast.makeText(this, "保存的密钥无法解密，请重新输入。", Toast.LENGTH_LONG).show() }
+        try { config = store.load() } catch (_: Exception) { Toast.makeText(this, "保存的连接无法解密，请重新输入 PIN。", Toast.LENGTH_LONG).show() }
         root = column().apply { setBackgroundColor(bg) }
         if (Build.VERSION.SDK_INT >= 35) root.setOnApplyWindowInsetsListener { view, insets ->
             val systemBars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
@@ -103,12 +106,15 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         foreground = false; handler.removeCallbacks(poll)
+        pairingGeneration++
+        pairingTransport?.close()
         transport?.close()
         super.onPause()
     }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        pairingGeneration++; pairingTransport?.close()
         (transport as? BluetoothTransport)?.dispose() ?: transport?.close()
         worker.shutdownNow()
         super.onDestroy()
@@ -129,7 +135,7 @@ class MainActivity : Activity() {
         content.removeAllViews()
         if (page == 4) renderSettings() else if (snapshot == null) {
             val card = card("电脑性能，随手查看")
-            card.addView(label("在电脑端启用手机连接，复制 HTTPS 地址、证书指纹和访问密钥；也可在系统设置中配对蓝牙后连接。", 15f, muted))
+            card.addView(label("在电脑端启用手机连接并生成六位 PIN；手机和电脑连接同一局域网，或在系统设置中配对蓝牙后，选择电脑并输入 PIN 即可连接。", 15f, muted))
             card.addView(button("连接电脑", true) { connectionDialog() })
             card.addView(label("仅在此页面位于前台时同步，每 2 秒请求一次。应用切到后台后停止同步。", 12f, muted))
         } else when (page) {
@@ -322,14 +328,14 @@ class MainActivity : Activity() {
     }
 
     private fun renderSettings() {
-        title("连接与设置", "访问密钥以 Android Keystore 加密保存在本机。")
+        title("连接与设置", "首次连接只需六位 PIN，连接凭据由 Android Keystore 加密保存。")
         val connection = card("手机连接")
         connection.addView(label(if (config == null) "尚未配置电脑" else "${config!!.mode} · ${config!!.address}", 13f, muted))
         connection.addView(button("更改连接") { connectionDialog() })
         connectionInfo?.let { info -> connection.addView(label("电脑 HTTPS：${if (info.optBoolean("remoteEnabled")) "已运行" else "未运行"} · 控制权限：${if (info.optBoolean("remoteControlEnabled")) "允许" else "关闭"}\n电脑蓝牙：${info.optString("bluetoothStatus")}", 12f, muted)) }
         if (connected) connection.addView(button("断开连接") { disconnect(); renderPage() })
         connection.addView(button("清除保存的连接") {
-            AlertDialog.Builder(this).setTitle("清除手机连接？").setMessage("将断开连接并移除手机保存的电脑地址、证书指纹和访问密钥。")
+            AlertDialog.Builder(this).setTitle("清除手机连接？").setMessage("将断开连接并移除手机保存的电脑地址和连接凭据，下次需要重新输入 PIN。")
                 .setPositiveButton("清除") { _, _ -> disconnect(); store.clear(); config = null; snapshot = null; history.clear(); lastSequence = -1; renderPage() }.setNegativeButton("取消", null).show()
         })
         val settings = pcSettings
@@ -449,7 +455,6 @@ class MainActivity : Activity() {
     private fun connect(newConfig: ConnectionConfig) {
         try {
             val validated = newConfig.validated()
-            store.save(validated)
             disconnect(); config = validated; history.clear(); snapshot = null; lastSequence = -1L; refreshCount = 0
             transport = if (validated.mode == "Bluetooth") BluetoothTransport(this, validated) else HttpsTransport(validated)
             connected = true; status.text = "正在连接 ${validated.address}…"; renderPage()
@@ -459,35 +464,89 @@ class MainActivity : Activity() {
 
     private fun connectionDialog() {
         val form = column().apply { setPadding(dp(20), dp(8), dp(20), 0) }
-        val modes = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("HTTPS（局域网 / VPN）", "蓝牙（已配对电脑）")); setSelection(if (config?.mode == "Bluetooth") 1 else 0) }
+        val modes = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("同一局域网", "蓝牙（已配对电脑）")); setSelection(if (config?.mode == "Bluetooth") 1 else 0) }
         form.addView(modes)
-        val address = EditText(this).apply { hint = "https://192.168.1.10:47831"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI; setSingleLine(); if (config?.mode == "HTTPS") setText(config?.address) }
-        form.addView(address)
-        val fingerprint = EditText(this).apply { hint = "电脑证书 SHA-256 指纹"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; setText(config?.fingerprint.orEmpty()); textSize = 12f }
-        form.addView(fingerprint)
+        val lan = column()
+        val computers = mutableListOf<DiscoveredPc>()
+        config?.takeIf { it.mode == "HTTPS" }?.let { computers.add(DiscoveredPc("已保存的电脑", it.address)) }
+        val computerPicker = Spinner(this)
+        fun showComputers() { computerPicker.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, if (computers.isEmpty()) listOf("尚未找到电脑") else computers.map { "${it.name} · ${it.address.substringAfter("https://")}" }) }
+        showComputers(); lan.addView(computerPicker)
+        val discoveryStatus = label("正在查找局域网电脑…", 12f, muted)
+        lan.addView(discoveryStatus)
+        val address = EditText(this).apply { hint = "https://电脑IP:47831"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI; setSingleLine(); visibility = View.GONE; setTextColor(textColor) }
+        val manual = button("未发现电脑？手动填写地址") { address.visibility = View.VISIBLE; address.requestFocus() }
+        lan.addView(manual); lan.addView(address); form.addView(lan)
         val bluetoothAddress = label(if (config?.mode == "Bluetooth") config?.address.orEmpty() else "尚未选择电脑", 13f, muted)
         form.addView(bluetoothAddress)
         val paired = button("选择已配对电脑") { selectPairedDevice { bluetoothAddress.text = it } }
         form.addView(paired)
-        val token = EditText(this).apply { hint = "电脑端访问密钥"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD; setSingleLine(); setText(config?.token.orEmpty()) }
-        form.addView(token)
-        form.addView(label("从电脑端连接页手动填写。蓝牙先在手机系统设置中与电脑配对。访问密钥用于所有请求。", 12f, muted))
+        val pin = EditText(this).apply { hint = "六位 PIN"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD; filters = arrayOf(InputFilter.LengthFilter(6)); setSingleLine(); setTextColor(textColor); textSize = 24f; gravity = Gravity.CENTER; letterSpacing = 0.2f }
+        form.addView(pin)
+        form.addView(label("在电脑端连接页生成 PIN，并在有效期内输入。PIN 只用于本次验证，不会保存；以后可直接连接已保存的电脑。蓝牙先在系统设置中完成配对。", 12f, muted))
         modes.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                address.visibility = if (position == 0) View.VISIBLE else View.GONE
-                fingerprint.visibility = address.visibility
+                lan.visibility = if (position == 0) View.VISIBLE else View.GONE
                 paired.visibility = if (position == 1) View.VISIBLE else View.GONE
                 bluetoothAddress.visibility = paired.visibility
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
-        val dialog = AlertDialog.Builder(this).setTitle("连接电脑").setView(ScrollView(this).apply { addView(form) }).setPositiveButton("保存并连接", null).setNegativeButton("取消", null).create()
+        val dialog = AlertDialog.Builder(this).setTitle("输入 PIN 连接电脑").setView(ScrollView(this).apply { addView(form) }).setPositiveButton("验证并连接", null).setNegativeButton("取消", null).create()
+        val discover: () -> Unit = {
+            discoveryStatus.text = "正在查找局域网电脑…"
+            worker.execute {
+                try {
+                    val found = LanDiscovery.discover()
+                    handler.post {
+                        if (!dialog.isShowing) return@post
+                        val previous = computers.getOrNull(computerPicker.selectedItemPosition)?.address
+                        found.forEach { item -> computers.removeAll { it.address == item.address }; computers.add(item) }
+                        showComputers()
+                        computers.indexOfFirst { it.address == previous }.takeIf { it >= 0 }?.let { computerPicker.setSelection(it) }
+                        discoveryStatus.text = if (found.isEmpty()) "未发现电脑。确认同一局域网，且电脑已开启手机连接。" else "找到 ${found.size} 台电脑，请选择后输入 PIN。"
+                    }
+                } catch (e: Exception) { handler.post { if (dialog.isShowing) discoveryStatus.text = "查找失败：${errorMessage(e)}" } }
+            }
+        }
+        lan.addView(button("重新查找电脑") { discover() }, 1)
+        config?.let { saved -> form.addView(button("直接连接已保存的电脑", true) {
+            if (saved.mode == "Bluetooth" && !hasBluetoothPermission()) { requestBluetoothPermission(); return@button }
+            connect(saved); dialog.dismiss()
+        }) }
+        dialog.setOnDismissListener { pairingGeneration++; pairingTransport?.close(); pairingTransport = null; pin.text.clear() }
         dialog.setOnShowListener {
+            discover()
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (modes.selectedItemPosition == 1 && !hasBluetoothPermission()) { requestBluetoothPermission(); return@setOnClickListener }
                 try {
-                    val newConfig = ConnectionConfig(if (modes.selectedItemPosition == 0) "HTTPS" else "Bluetooth", if (modes.selectedItemPosition == 0) address.text.toString() else bluetoothAddress.text.toString(), fingerprint.text.toString(), token.text.toString()).validated()
-                    connect(newConfig); dialog.dismiss()
+                    if (busy) { showError("正在同步，请稍后再试。"); return@setOnClickListener }
+                    val selectedAddress = if (modes.selectedItemPosition == 1) bluetoothAddress.text.toString() else if (address.visibility == View.VISIBLE && address.text.isNotBlank()) address.text.toString() else computers.getOrNull(computerPicker.selectedItemPosition)?.address.orEmpty()
+                    val target = PairingTarget(if (modes.selectedItemPosition == 0) "HTTPS" else "Bluetooth", selectedAddress).validated()
+                    val enteredPin = pin.text.toString()
+                    require(enteredPin.matches(Regex("[0-9]{6}"))) { "请输入电脑显示的六位 PIN，保留开头的 0。" }
+                    pin.text.clear(); busy = true; handler.removeCallbacks(poll)
+                    val generation = ++pairingGeneration
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+                    status.text = "正在验证电脑 PIN…"
+                    worker.execute {
+                        var channel: PairingTransport? = null
+                        try {
+                            if (generation != pairingGeneration) return@execute
+                            val current = if (target.mode == "Bluetooth") BluetoothPairingTransport(this, target) else HttpsPairingTransport(target)
+                            channel = current; pairingTransport = current
+                            if (generation != pairingGeneration) return@execute
+                            val pairedConfig = PinPairingClient().pair(target, enteredPin, current)
+                            handler.post {
+                                if (generation != pairingGeneration || !dialog.isShowing || !foreground) return@post
+                                try { store.save(pairedConfig); connect(pairedConfig); dialog.dismiss() } catch (e: Exception) { showError(errorMessage(e)) }
+                            }
+                        } catch (e: Exception) { handler.post { if (generation == pairingGeneration && dialog.isShowing) { status.text = "PIN 验证失败，原连接已保留"; showError(errorMessage(e)) } } }
+                        finally {
+                            channel?.close(); if (pairingTransport === channel) pairingTransport = null
+                            handler.post { busy = false; if (dialog.isShowing) dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true; if (connected && foreground) { handler.removeCallbacks(poll); handler.post(poll) } }
+                        }
+                    }
                 } catch (e: Exception) { showError(errorMessage(e)) }
             }
         }
@@ -532,7 +591,7 @@ class MainActivity : Activity() {
     private fun showError(message: String) { if (!isFinishing) AlertDialog.Builder(this).setTitle("操作提示").setMessage(message).setPositiveButton("知道了", null).show() }
     private fun errorMessage(error: Exception): String {
         return when (error) {
-            is javax.net.ssl.SSLException -> "TLS 校验失败，请核对电脑证书指纹和手机时间。"
+            is javax.net.ssl.SSLException -> "电脑身份校验失败，请在电脑端重新生成 PIN，并检查手机时间。"
             is java.net.SocketTimeoutException -> "电脑连接超时，请检查地址、网络和防火墙。"
             is java.net.ConnectException -> "无法连接电脑，请检查服务是否启动及网络是否可达。"
             is SecurityException -> "没有蓝牙连接权限，请授权“附近的设备”。"

@@ -10,6 +10,7 @@ namespace HardwareScope.Core;
 internal sealed class RemoteServer(MonitorHost host, X509Certificate2 certificate) : IAsyncDisposable
 {
     private WebApplication? application;
+    private LanDiscovery? discovery;
     public async Task StartAsync(int port)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
@@ -24,6 +25,34 @@ internal sealed class RemoteServer(MonitorHost host, X509Certificate2 certificat
         });
         application = builder.Build();
         application.MapGet("/health", () => Results.Json(new { status = "ok", product = "HardwareScope" }));
+        application.Map("/pair/{**path}", async context =>
+        {
+            if (!LocalNetwork.IsLocalPeer(context.Connection.RemoteIpAddress))
+            {
+                context.Response.StatusCode = 403;
+                await context.Response.WriteAsJsonAsync(new CommandResult(false, "配对仅允许同一局域网内的设备"), SettingsStore.Json);
+                return;
+            }
+            if (context.Request.Method != "POST")
+            {
+                context.Response.StatusCode = 405;
+                context.Response.Headers.Allow = "POST";
+                await context.Response.WriteAsJsonAsync(new CommandResult(false, "配对接口仅接受 POST 请求"), SettingsStore.Json);
+                return;
+            }
+            try
+            {
+                using var json = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+                var result = await host.DispatchAsync(context.Request.Method, context.Request.Path.Value!, json.RootElement);
+                context.Response.StatusCode = result.Status;
+                await context.Response.WriteAsJsonAsync(result.Body, result.Body.GetType(), SettingsStore.Json, cancellationToken: context.RequestAborted);
+            }
+            catch (JsonException)
+            {
+                context.Response.StatusCode = 400;
+                await context.Response.WriteAsJsonAsync(new CommandResult(false, "配对请求格式无效"), SettingsStore.Json);
+            }
+        });
         application.Map("/api/{**path}", async context =>
         {
             var authorization = context.Request.Headers.Authorization.ToString();
@@ -52,10 +81,13 @@ internal sealed class RemoteServer(MonitorHost host, X509Certificate2 certificat
             }
         });
         await application.StartAsync();
+        discovery = new LanDiscovery(port);
+        discovery.Start();
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (discovery != null) { await discovery.DisposeAsync(); discovery = null; }
         if (application == null) return;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         await application.StopAsync(timeout.Token);

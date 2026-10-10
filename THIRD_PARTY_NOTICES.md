@@ -16,6 +16,7 @@ HardwareScope uses unmodified third-party libraries. Package versions and licens
 | .NET and Windows Desktop runtime / Microsoft libraries | MIT and included notices; [source](https://github.com/dotnet) |
 | HidSharp 2.6.4 | Apache-2.0; included original package license |
 | Kotlin runtime 2.1.21 | Apache-2.0; [source](https://github.com/JetBrains/kotlin) |
+| BouncyCastle.Cryptography 2.6.2 (Windows) / bcprov-jdk18on 1.86 (Android) | Bouncy Castle license (MIT); [C# source](https://github.com/bcgit/bc-csharp), [Java source and license](https://github.com/bcgit/bc-java) |
 | JUnit 4.13.2 (test dependency) | EPL-1.0; [license](https://github.com/junit-team/junit4/blob/main/LICENSE-junit.txt) |
 | org.json 20250517 (test dependency) | Public domain; [license](https://github.com/stleary/JSON-java/blob/20250517/LICENSE) |
 | Inno Setup installer | [Inno Setup license](https://jrsoftware.org/files/is/license.txt) |

@@ -36,7 +36,7 @@ if (args.FirstOrDefault() == "--integration-server")
     var info = service.GetConnectionInfo();
     await File.WriteAllTextAsync(Path.Combine(directory, "connection.json"), JsonSerializer.Serialize(new
     {
-        address = "https://127.0.0.1:47839", token = info.Token, fingerprint = info.CertificateSha256
+        address = "https://127.0.0.1:47839", pin = service.CreatePairingPin().Pin, token = info.Token, fingerprint = info.CertificateSha256
     }));
     Console.WriteLine("Integration server ready on HTTPS localhost:47839; isolated test credentials saved locally.");
     using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(12));
@@ -122,6 +122,8 @@ using (var rejectedClient = new HttpClient(rejectedHandler) { BaseAddress = clie
     catch (HttpRequestException) { refused = true; }
     Check("Certificate mismatch is refused", refused);
 }
+using (var pairingClient = new HttpClient(handler, false) { BaseAddress = client.BaseAddress, Timeout = TimeSpan.FromSeconds(15) })
+    await PairingChecks.RunAsync(pairingClient, host, Check);
 await host.SaveSettingsAsync(host.Settings with { BluetoothEnabled = true });
 var bluetooth = host.GetConnectionInfo().BluetoothStatus;
 Check("Bluetooth listener attempted on real adapter", !bluetooth.Contains("未启用"), bluetooth);

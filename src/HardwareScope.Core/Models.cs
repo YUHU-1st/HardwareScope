@@ -30,5 +30,6 @@ public sealed record SampleDiagnostics(double SampleDurationMs, double MonitorCp
 public sealed record CommandResult(bool Success, string Message);
 public sealed record ConnectionInfo(string[] Addresses, string Token, string CertificateSha256,
     string BluetoothServiceUuid, string BluetoothStatus, bool RemoteEnabled, bool RemoteControlEnabled);
+public sealed record PairingInfo(string? Pin, DateTimeOffset? ExpiresAt, DateTimeOffset? LockedUntil);
 public sealed record PriorityRequest(string InstanceId, string Priority);
 public sealed record TerminateRequest(string InstanceId);

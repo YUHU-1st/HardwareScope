@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using InTheHand.Net;
 using InTheHand.Net.Sockets;
 
 namespace HardwareScope.Core;
@@ -38,8 +39,14 @@ internal sealed class BluetoothServer(MonitorHost host) : IAsyncDisposable
             try
             {
                 var client = await listener!.AcceptBluetoothClientAsync();
-                client.Authenticate = true;
-                client.Encrypt = true;
+                try
+                {
+                    var endpoint = (BluetoothEndPoint)client.Client.RemoteEndPoint!;
+                    if (!new BluetoothDeviceInfo(endpoint.Address).Authenticated) { client.Dispose(); continue; }
+                    client.Authenticate = true;
+                    client.Encrypt = true;
+                }
+                catch (SocketException) { client.Dispose(); continue; }
                 if (clients.Count >= 4) { client.Dispose(); continue; }
                 var id = Interlocked.Increment(ref nextId);
                 clients[id] = client;
@@ -74,14 +81,16 @@ internal sealed class BluetoothServer(MonitorHost host) : IAsyncDisposable
                     using var json = JsonDocument.Parse(line);
                     var root = json.RootElement;
                     id = root.TryGetProperty("id", out var requestId) ? requestId.GetString() : null;
+                    var method = root.GetProperty("method").GetString() ?? throw new JsonException("缺少请求方法");
+                    var path = root.GetProperty("path").GetString() ?? throw new JsonException("缺少请求路径");
+                    JsonElement? requestBody = root.TryGetProperty("body", out var b) ? b.Clone() : null;
                     var supplied = root.TryGetProperty("token", out var auth) ? auth.GetString() : null;
-                    if (!host.Authorize(supplied))
+                    if (path.StartsWith("/pair/", StringComparison.Ordinal))
+                        (status, body) = await host.DispatchAsync(method, path, requestBody);
+                    else if (!host.Authorize(supplied))
                     { status = 401; body = new CommandResult(false, "授权密钥无效"); }
                     else
                     {
-                        var method = root.GetProperty("method").GetString() ?? throw new JsonException("缺少请求方法");
-                        var path = root.GetProperty("path").GetString() ?? throw new JsonException("缺少请求路径");
-                        JsonElement? requestBody = root.TryGetProperty("body", out var b) ? b.Clone() : null;
                         (status, body) = await host.DispatchAsync(method, path, requestBody);
                     }
                 }

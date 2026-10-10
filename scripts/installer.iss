@@ -1,15 +1,15 @@
 [Setup]
 AppId={{3A03C035-1110-41D5-B153-0F6C06203061}
 AppName=HardwareScope 硬件视界
-AppVersion=1.2.0
+AppVersion=1.3.0
 AppPublisher=HardwareScope
 DefaultDirName={localappdata}\Programs\HardwareScope
 DefaultGroupName=HardwareScope 硬件视界
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputDir=..\artifacts\release\1.2.0
-OutputBaseFilename=HardwareScope-1.2.0-windows-x64-setup
+OutputDir=..\artifacts\release\1.3.0
+OutputBaseFilename=HardwareScope-1.3.0-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
